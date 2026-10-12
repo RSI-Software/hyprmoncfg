@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -92,15 +93,42 @@ const fallbackConnectorName = "FALLBACK"
 // too. A head with no connector and no hardware behind it would otherwise be
 // hashed into the monitor set, matched against saved profiles, drawn by the
 // panel, and captured into a profile saved from live state.
+//
+// Headless outputs are the other kind. Screen recorders, streaming hosts, and
+// remote desktops create them with `hyprctl output create headless`. Counted
+// as displays, each one arriving changes the monitor set: the layout extends
+// onto a screen nobody looks at, or a profile that keeps other displays off
+// switches it off under the tool that made it, and Hyprland reloads either way.
 func dropSyntheticMonitors(monitors []Monitor) []Monitor {
 	filtered := monitors[:0]
 	for _, monitor := range monitors {
-		if strings.EqualFold(strings.TrimSpace(monitor.Name), fallbackConnectorName) {
+		if isSyntheticMonitor(monitor) {
 			continue
 		}
 		filtered = append(filtered, monitor)
 	}
 	return filtered
+}
+
+// drmConnectorName matches the names the kernel gives display connectors,
+// which Hyprland uses for every output it drives through DRM.
+var drmConnectorName = regexp.MustCompile(`^(Unknown|VGA|DVI-[IDA]|Composite|SVIDEO|LVDS|Component|DIN|DP|HDMI-[AB]|TV|eDP|Virtual|DSI|DPI|Writeback|SPI|USB)-[0-9]+$`)
+
+func isSyntheticMonitor(monitor Monitor) bool {
+	name := strings.TrimSpace(monitor.Name)
+	if strings.EqualFold(name, fallbackConnectorName) {
+		return true
+	}
+	if backend := monitor.HardwareDetails.Backend; backend != "" {
+		return backend == "headless"
+	}
+	// Older Hyprland does not report the backend. A headless output has no
+	// EDID and takes its creator's name instead of a kernel connector's; a
+	// nested session's outputs are WAYLAND-N.
+	identity := monitor.Make + monitor.Model + monitor.Serial + monitor.Description
+	return strings.TrimSpace(identity) == "" &&
+		!drmConnectorName.MatchString(name) &&
+		!strings.HasPrefix(name, "WAYLAND-")
 }
 
 // normalizeMirrorTargets rewrites what hyprctl reports for a mirroring monitor

@@ -2,8 +2,10 @@ package hypr
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -305,6 +307,43 @@ func TestDropSyntheticMonitorsKeepsRealConnectors(t *testing.T) {
 
 	if got := dropSyntheticMonitors(monitors); len(got) != len(monitors) {
 		t.Fatalf("filtering dropped a real connector: %+v", got)
+	}
+}
+
+func TestDropSyntheticMonitorsRemovesHeadlessOutputs(t *testing.T) {
+	// Hyprland that reports the backend, as hyprctl -j monitors prints it.
+	var reported []Monitor
+	if err := json.Unmarshal([]byte(`[
+		{"name": "DP-1", "make": "Dell", "model": "U2720Q", "hardwareDetails": {"backend": "drm"}},
+		{"name": "HEADLESS-2", "hardwareDetails": {"backend": "headless"}},
+		{"name": "sunshine", "hardwareDetails": {"backend": "headless"}},
+		{"name": "WAYLAND-1", "hardwareDetails": {"backend": "wayland"}}
+	]`), &reported); err != nil {
+		t.Fatal(err)
+	}
+	// Older Hyprland, which does not.
+	older := []Monitor{
+		{Name: "DP-1", Make: "Dell", Model: "U2720Q"},
+		{Name: "HEADLESS-2"},
+		{Name: "sunshine"},
+		{Name: "WAYLAND-1"},
+		{Name: "HDMI-A-1"}, // behind a KVM that hides the EDID
+	}
+
+	for label, tc := range map[string]struct {
+		monitors []Monitor
+		want     string
+	}{
+		"reported": {reported, "DP-1,WAYLAND-1"},
+		"older":    {older, "DP-1,WAYLAND-1,HDMI-A-1"},
+	} {
+		var kept []string
+		for _, monitor := range dropSyntheticMonitors(tc.monitors) {
+			kept = append(kept, monitor.Name)
+		}
+		if got := strings.Join(kept, ","); got != tc.want {
+			t.Errorf("%s: kept %s, want %s", label, got, tc.want)
+		}
 	}
 }
 
