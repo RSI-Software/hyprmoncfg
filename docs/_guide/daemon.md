@@ -64,6 +64,15 @@ workspace plan are preserved; the saved profile is not overwritten.
 Physical-size scale recommendations and explicit failed-wake/cold-start rescue
 remain separate follow-up work.
 
+The daemon ignores headless outputs. Screen recorders, streaming hosts, and
+remote desktops create them with `hyprctl output create headless`; they never
+join the daemon's monitor set, match a profile, or trigger a reload. Applying a
+profile, from the daemon, the TUI, or `hyprmoncfg apply`, never extends it onto
+them or moves workspaces to them. The TUI still shows them. Hyprland releases
+that do not report an output's backend get a fallback: an output with no EDID
+whose name is not a kernel connector name such as `DP-1` or `HDMI-A-1` counts
+as headless.
+
 Failed automatic applies retry independently of monitor-change events, starting
 after 2 seconds with capped exponential backoff up to 30 seconds. Transient busy
 reads and writer contention retry after the normal debounce interval. Successful

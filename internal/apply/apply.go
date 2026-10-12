@@ -207,6 +207,9 @@ func SnapshotCommands(monitors []hypr.Monitor) []string {
 }
 
 func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Monitor, modearg ...applyMode) (RevertState, error) {
+	// Extending onto a headless output would hand it workspaces from the
+	// profile's plan, whichever caller supplied the monitors.
+	monitors = hypr.DropHeadless(monitors)
 	p = profile.ExtendConnected(p, monitors)
 	mode := ApplyModeNonInteractive
 	if len(modearg) > 0 {
@@ -421,6 +424,7 @@ func (e Engine) waitForAppliedProfile(ctx context.Context, p profile.Profile, be
 
 	for {
 		applied, err := query(ctx, e, "monitors", e.Client.Monitors)
+		applied = hypr.DropHeadless(applied)
 		if errors.Is(err, context.Canceled) {
 			return nil, err
 		}
