@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - main
+      - rsi
   pull_request:
 
 permissions:
