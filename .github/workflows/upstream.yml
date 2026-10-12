@@ -1,0 +1,27 @@
+name: Upstream
+
+# RSI fork: fails weekly while crmne/hyprmoncfg has a release this fork has not rebased onto.
+# A failed scheduled run notifies the workflow's last editor.
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare with the latest upstream release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          upstream=$(gh api repos/crmne/hyprmoncfg/releases/latest --jq .tag_name)
+          ours=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          echo "upstream $upstream; ours $ours"
+          if [ "${ours%%-rsi*}" != "$upstream" ]; then
+            echo "::error::upstream released $upstream; rebase rsi onto it and tag $upstream-rsi.1"
+            exit 1
+          fi
