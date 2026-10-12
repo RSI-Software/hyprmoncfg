@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -347,5 +348,40 @@ printf '%s\n' "$*" >> "` + logPath + `"
 	want := "--instance sig-test --batch keyword monitor DP-1,preferred,auto,1 ; dispatch hl.dsp.workspace.move({ workspace = \"dev docs\", monitor = \"DP-1\" })\n"
 	if string(data) != want {
 		t.Fatalf("unexpected hyprctl calls:\nwant:\n%s\ngot:\n%s", want, data)
+	}
+}
+
+func TestDropHeadlessMonitorsKeepsConnectorsWithoutEDID(t *testing.T) {
+	monitors := []Monitor{
+		{Name: "DP-6", Make: "GIGA-BYTE", Model: "M32U"},
+		{Name: "VMON-1"},
+		{Name: "HDMI-A-1"},
+		{Name: "HEADLESS-2"},
+		{Name: "Virtual-1"},
+		{Name: "SCREEN", Make: "Acme"},
+	}
+
+	var kept []string
+	for _, monitor := range dropHeadlessMonitors(monitors) {
+		kept = append(kept, monitor.Name)
+	}
+	if got := strings.Join(kept, ","); got != "DP-6,HDMI-A-1,Virtual-1,SCREEN" {
+		t.Fatalf("kept %s", got)
+	}
+}
+
+func TestHeadlessEvent(t *testing.T) {
+	for value, want := range map[string]bool{
+		"VMON-1":                          true,
+		"8,VMON-7,":                       true,
+		"3,HEADLESS-2,":                   true,
+		"DP-1":                            false,
+		"4,DP-6,GIGA-BYTE M32U 21270B000": false,
+		"5,eDP-1,":                        false,
+		"9,WAYLAND-1,Wayland output":      false,
+	} {
+		if got := HeadlessEvent(Event{Type: EventMonitorAdded, Value: value}); got != want {
+			t.Errorf("HeadlessEvent(%q) = %v, want %v", value, got, want)
+		}
 	}
 }
