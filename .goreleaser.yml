@@ -4,7 +4,7 @@ project_name: hyprmoncfg
 
 release:
   github:
-    owner: crmne
+    owner: RSI-Software
     name: hyprmoncfg
   name_template: "hyprmoncfg {{ .Version }}"
   extra_files:

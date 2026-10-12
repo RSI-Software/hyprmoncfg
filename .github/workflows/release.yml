@@ -1,5 +1,7 @@
 name: Release
 
+# RSI fork: tags on the rsi branch publish binaries only. Upstream's
+# main-branch, packaging, and docs jobs do not apply here.
 on:
   push:
     tags:
@@ -7,34 +9,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: write
 
 jobs:
-  release-source:
-    name: tag is on main
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Require the release commit on main
-        run: |
-          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
-            echo "Release tags must point to a commit already on origin/main." >&2
-            exit 1
-          fi
-      - name: Require committed release notes
-        run: |
-          notes="docs/releases/${GITHUB_REF_NAME#v}.md"
-          if [[ ! -s $notes ]]; then
-            echo "Commit the release notes at $notes before tagging." >&2
-            exit 1
-          fi
-
   goreleaser:
-    needs: release-source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,81 +27,11 @@ jobs:
       - name: Run tests
         run: go test ./...
 
-      - name: Locate release notes
-        id: notes
-        run: echo "path=docs/releases/${GITHUB_REF_NAME#v}.md" >> "$GITHUB_OUTPUT"
-
       - name: Goreleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: v2.18.1
-          args: release --clean --release-notes ${{ steps.notes.outputs.path }}
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Mark prerelease
-        if: contains(github.ref_name, '-')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$GITHUB_REF_NAME" --prerelease
-
-  packaging:
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
-    needs: goreleaser
-    uses: ./.github/workflows/packaging.yml
-    with:
-      version: ${{ github.ref_name }}
-    secrets: inherit
-
-  publish-source-recipes:
-    needs: packaging
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: package-assets
-          path: dist/package-assets
-      - name: Attach distribution source recipes to the release
-        env:
-          VERSION: ${{ github.ref_name }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cd dist/package-assets
-          sha256sum -c source-packaging-checksums.txt
-          gh release upload "$VERSION" ./*.tar.xz source-packaging-checksums.txt \
-            --repo "$GITHUB_REPOSITORY" --clobber
-
-  sync-docs-version:
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
-    needs: goreleaser
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_VERSION: ${{ github.ref_name }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Update docs version selector
-        run: |
-          version="${RELEASE_VERSION#v}"
-          sed -i "s/^current:.*/current: \"${version}\"/" docs/_data/versions.yml
-
-      - name: Commit docs version update
-        run: |
-          version="${RELEASE_VERSION#v}"
-          if git diff --quiet -- docs/_data/versions.yml; then
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/_data/versions.yml
-          git commit -m "docs: update version selector to ${version}"
-          git push origin HEAD:main
-
-      - name: Trigger docs workflow
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run docs.yml --ref main
