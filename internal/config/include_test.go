@@ -351,3 +351,32 @@ func TestIncludeLeavesAReadOnlyConfigAlone(t *testing.T) {
 		t.Fatalf("read-only removal = %+v", removal)
 	}
 }
+
+// A --monitors-conf target without "hyprmoncfg" in its name must not gain
+// another include on every apply, and must come back out on hand-back.
+func TestIncludeOfACustomTargetStaysSingleAndRemovable(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/home/someone/.config")
+	original := "monitor = eDP-1, preferred, auto, 1\nsource = ~/.config/hypr/other.conf\n"
+	path := writeConfig(t, original)
+	target := "/srv/displays/monitors.conf"
+
+	for i := 0; i < 3; i++ {
+		if _, err := EnsureIncluded(path, HyprConfigLegacy, target); err != nil {
+			t.Fatalf("EnsureIncluded: %v", err)
+		}
+	}
+	content := readConfig(t, path)
+	if n := strings.Count(content, "source = "+target); n != 1 {
+		t.Fatalf("expected one include, got %d:\n%s", n, content)
+	}
+	if result, err := EnsureIncluded(path, HyprConfigLegacy, target); err != nil || result.Changed() {
+		t.Fatalf("a settled config should be left alone, got %+v, %v", result, err)
+	}
+
+	if result, err := RemoveInclude(path, HyprConfigLegacy); err != nil || !result.Removed {
+		t.Fatalf("RemoveInclude: %+v, %v", result, err)
+	}
+	if got := readConfig(t, path); got != original {
+		t.Fatalf("config not restored:\n%q\nwant\n%q", got, original)
+	}
+}

@@ -64,12 +64,19 @@ func EnsureIncluded(rootPath string, format HyprConfigFormat, targetPath string)
 	lines := strings.Split(string(content), "\n")
 	kept := make([]string, 0, len(lines))
 	hadInclude := false
+	afterComment := false
 	for _, line := range lines {
 		switch {
-		case isHyprmoncfgInclude(line, format):
+		// A target named without "hyprmoncfg" is still ours when the line is
+		// exactly our include, or follows our comment.
+		case isHyprmoncfgInclude(line, format) || strings.TrimSpace(line) == result.Line ||
+			afterComment && isIncludeLine(line, format):
 			hadInclude = true
+			afterComment = false
 		case isHyprmoncfgComment(line):
+			afterComment = true
 		default:
+			afterComment = false
 			kept = append(kept, line)
 		}
 	}
@@ -131,11 +138,14 @@ func RemoveInclude(rootPath string, format HyprConfigFormat) (RemoveResult, erro
 	lines := strings.Split(string(content), "\n")
 	kept := make([]string, 0, len(lines))
 	found := false
+	afterComment := false
 	for _, line := range lines {
-		if isHyprmoncfgInclude(line, format) || isHyprmoncfgComment(line) {
+		if isHyprmoncfgInclude(line, format) || isHyprmoncfgComment(line) || afterComment && isIncludeLine(line, format) {
 			found = true
+			afterComment = isHyprmoncfgComment(line)
 			continue
 		}
+		afterComment = false
 		kept = append(kept, line)
 	}
 	if !found {
@@ -162,6 +172,16 @@ func isHyprmoncfgInclude(line string, format HyprConfigFormat) bool {
 		return strings.HasPrefix(trimmed, "dofile(") ||
 			strings.HasPrefix(trimmed, "require(") ||
 			(strings.HasPrefix(trimmed, "do local ") && strings.Contains(trimmed, "dofile("))
+	}
+	return strings.HasPrefix(trimmed, "source")
+}
+
+// isIncludeLine reports a line that loads another config file.
+func isIncludeLine(line string, format HyprConfigFormat) bool {
+	trimmed := strings.TrimSpace(line)
+	if format == HyprConfigLua {
+		return strings.HasPrefix(trimmed, "dofile(") || strings.HasPrefix(trimmed, "require(") ||
+			strings.HasPrefix(trimmed, "do local ") && strings.Contains(trimmed, "dofile(")
 	}
 	return strings.HasPrefix(trimmed, "source")
 }
