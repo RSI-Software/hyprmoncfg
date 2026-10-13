@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/profile"
@@ -45,7 +46,7 @@ func intendedOutputsUsable(p profile.Profile, monitors []hypr.Monitor) bool {
 			continue
 		}
 		m, ok := resolver.ResolveOutput(out)
-		if !ok || m.Disabled || !m.DPMSStatus || m.Width <= 0 || m.Height <= 0 || m.Name == "FALLBACK" {
+		if !ok || m.Disabled || !m.DPMSStatus || m.Width <= 0 || m.Height <= 0 || isSyntheticMonitor(m) {
 			return false
 		}
 		count++
@@ -56,12 +57,22 @@ func intendedOutputsUsable(p profile.Profile, monitors []hypr.Monitor) bool {
 // Existing usable displays are the base for an unsaved setup. Only displays
 // without a usable live mode need automatic extension and mode selection.
 func liveDraft(monitors []hypr.Monitor, rules []hypr.WorkspaceRule) profile.Profile {
+	// Hyprland's synthetic head is not a display to lay out or assign
+	// workspaces to, even if a caller passes it through unfiltered.
+	monitors = slices.DeleteFunc(slices.Clone(monitors), isSyntheticMonitor)
+	rules = slices.DeleteFunc(slices.Clone(rules), func(rule hypr.WorkspaceRule) bool {
+		return strings.EqualFold(strings.TrimSpace(rule.Monitor), syntheticMonitorName)
+	})
 	p := profile.FromState("draft", monitors, rules)
 	resolver := profile.NewMonitorResolver(monitors)
 	kept := p.Outputs[:0]
 	for _, out := range p.Outputs {
 		m, ok := resolver.ResolveOutput(out)
-		if ok && !m.Disabled && m.Width > 0 && m.Height > 0 && m.Name != "FALLBACK" {
+		if ok && !m.Disabled && m.Width > 0 && m.Height > 0 {
+			// VRR activity and the scanout buffer format are telemetry. Use
+			// the same settings as a newly extended display so the request
+			// stays the same while they change, as rejectedStateHash does.
+			out.VRR, out.Bitdepth = 0, 8
 			kept = append(kept, out)
 		}
 	}
@@ -70,7 +81,19 @@ func liveDraft(monitors []hypr.Monitor, rules []hypr.WorkspaceRule) profile.Prof
 		// An overlapping discovery layout is not a usable arrangement to retain.
 		p.Outputs = nil
 	}
+	// Displays dropped above are placed again by ExtendConnected, which adds
+	// them to the workspace order after the retained ones.
+	p.Workspaces.MonitorOrder = slices.DeleteFunc(p.Workspaces.MonitorOrder, func(key string) bool {
+		_, ok := p.OutputByKey(key)
+		return !ok
+	})
 	return profile.ExtendConnected(p, monitors)
+}
+
+const syntheticMonitorName = "FALLBACK"
+
+func isSyntheticMonitor(m hypr.Monitor) bool {
+	return strings.EqualFold(strings.TrimSpace(m.Name), syntheticMonitorName)
 }
 
 // VRR activity and the current scanout buffer format are live telemetry, not

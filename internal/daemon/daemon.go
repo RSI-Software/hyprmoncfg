@@ -1020,7 +1020,11 @@ func (s *Service) applyBestLocked(ctx context.Context) (resultErr error) {
 		// stepping them down on a later attempt.
 		if after, queryErr := s.queryMonitors(ctx); queryErr == nil {
 			s.fallbacks.observeFailedApply(effective, after)
-			if errors.Is(err, apply.ErrVerificationFailed) && intendedOutputsUsable(effective, after) {
+			// Pause only once the rollback is known to have restored the
+			// previous config. A failed restore can leave the rejected file
+			// on disk for the next reload, so keep recovering instead.
+			if errors.Is(err, apply.ErrVerificationFailed) && !errors.Is(err, apply.ErrRollbackFailed) &&
+				intendedOutputsUsable(effective, after) {
 				if afterRules, rulesErr := s.queryWorkspaceRules(ctx); rulesErr == nil {
 					s.rejected = rememberRejected(effective, after, afterRules)
 					s.cfg.Logf("automatic layout rejected; keeping the usable restored layout until displays, workspace rules or the requested layout change")

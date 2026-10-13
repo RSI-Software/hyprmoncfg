@@ -765,6 +765,9 @@ fi
 if [[ "${1-}" == "dispatch" ]]; then
   exit 0
 fi
+if [[ "${1-}" == "--batch" ]]; then
+  exit 0
+fi
 
 echo "unexpected args: $*" >&2
 exit 1

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -26,7 +27,12 @@ func TestFirstSetupPreservesLiveModeRotationAndPlacement(t *testing.T) {
 	if err := svc.applyBest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(svc.applied.requested.Outputs, profile.FromMonitors("draft", monitors).Outputs) {
+	want := profile.FromMonitors("draft", monitors).Outputs
+	for i := range want {
+		// Live VRR readback is activity, not the configured mode.
+		want[i].VRR, want[i].Bitdepth = 0, 8
+	}
+	if !reflect.DeepEqual(svc.applied.requested.Outputs, want) {
 		t.Fatalf("startup changed working displays: %+v", svc.applied.requested.Outputs)
 	}
 	before := reloadCount(env.logPath)
@@ -37,6 +43,20 @@ func TestFirstSetupPreservesLiveModeRotationAndPlacement(t *testing.T) {
 	}
 	if reloadCount(env.logPath) != before {
 		t.Fatal("unchanged unsaved setup kept applying")
+	}
+	// A fullscreen client toggling VRR activity is not a new request.
+	monitors[0].VRR = 0
+	data, _ = json.Marshal(monitors)
+	override := filepath.Join(t.TempDir(), "monitors.json")
+	if err := os.WriteFile(override, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HYPRCTL_MONITORS_OVERRIDE", override)
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if reloadCount(env.logPath) != before {
+		t.Fatal("VRR activity change reapplied the unsaved setup")
 	}
 }
 
@@ -51,6 +71,54 @@ func TestLiveDraftStillEnablesModelessNewDisplay(t *testing.T) {
 	added, _ := p.OutputByKey(newDisplay.HardwareKey())
 	if !added.Enabled || added.Width != 1920 || added.X != 1080 {
 		t.Fatalf("new display was not extended: %+v", added)
+	}
+	if want := []string{working.HardwareKey(), newDisplay.HardwareKey()}; !reflect.DeepEqual(p.Workspaces.MonitorOrder, want) {
+		t.Fatalf("workspace order = %v, want %v", p.Workspaces.MonitorOrder, want)
+	}
+}
+
+// Hyprland's synthetic head must never be laid out, enabled or given
+// workspaces by an unsaved setup, even if it reaches the draft unfiltered.
+func TestLiveDraftExcludesSyntheticFallbackHead(t *testing.T) {
+	working := hypr.Monitor{Name: "DP-1", Make: "Dell", Model: "U2720Q", Width: 2560, Height: 1440, RefreshRate: 60, Scale: 1, DPMSStatus: true}
+	synthetic := hypr.Monitor{Name: "FALLBACK", Width: 1920, Height: 1080, RefreshRate: 60, X: 2560, Scale: 1, DPMSStatus: true, AvailableModes: []string{"1920x1080@60Hz"}}
+	modeless := synthetic
+	modeless.Disabled, modeless.Width, modeless.Height = true, 0, 0
+	rules := []hypr.WorkspaceRule{
+		{WorkspaceString: "1", Monitor: "DP-1"},
+		{WorkspaceString: "2", Monitor: "FALLBACK"},
+	}
+	for _, head := range []hypr.Monitor{synthetic, modeless} {
+		p := liveDraft([]hypr.Monitor{working, head}, rules)
+		if len(p.Outputs) != 1 || p.Outputs[0].Name != "DP-1" {
+			t.Fatalf("draft includes the synthetic head: %+v", p.Outputs)
+		}
+		for _, key := range p.Workspaces.MonitorOrder {
+			if key != p.Outputs[0].Key {
+				t.Fatalf("workspace order includes the synthetic head: %v", p.Workspaces.MonitorOrder)
+			}
+		}
+		for _, rule := range p.Workspaces.Rules {
+			if rule.OutputName == "FALLBACK" || rule.Workspace == "2" {
+				t.Fatalf("workspace rule targets the synthetic head: %+v", p.Workspaces.Rules)
+			}
+		}
+	}
+}
+
+// The daemon rebuilds an unsaved draft from live state on every pass, so
+// telemetry must not change the request and lift a rejection pause.
+func TestRejectedLiveDraftIgnoresTelemetry(t *testing.T) {
+	monitors := []hypr.Monitor{{Name: "DP-1", Make: "Dell", Model: "U2720Q", Width: 2560, Height: 1440, RefreshRate: 60, Scale: 1, DPMSStatus: true, VRR: 1, CurrentFormat: "XRGB8888"}}
+	r := rememberRejected(liveDraft(monitors, nil), monitors, nil)
+	monitors[0].VRR = 0
+	monitors[0].CurrentFormat = "XRGB2101010"
+	if !r.matches(liveDraft(monitors, nil), monitors, nil) {
+		t.Fatal("VRR activity or buffer format lifted the rejection pause")
+	}
+	monitors[0].Transform = 1
+	if r.matches(liveDraft(monitors, nil), monitors, nil) {
+		t.Fatal("a real layout change did not lift the rejection pause")
 	}
 }
 
@@ -141,5 +209,47 @@ func TestRejectedApplyRetainsVerificationError(t *testing.T) {
 	contents, _ := os.ReadFile(env.monitorsConfPath)
 	if strings.Contains(string(contents), "3840x1080") {
 		t.Fatal("rejected config was not rolled back")
+	}
+}
+
+// A rollback that did not complete can leave the rejected config on disk for
+// the next reload. Only a confirmed restore may pause automatic retries.
+func TestRejectedApplyWithFailedRollbackKeepsRetrying(t *testing.T) {
+	monitors := []hypr.Monitor{{Name: "DP-1", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1, DPMSStatus: true}}
+	data, _ := json.Marshal(monitors)
+	env := newApplyBestTestEnvWithMonitors(t, string(data), string(data))
+	dir := filepath.Dir(env.logPath)
+	if err := os.Rename(filepath.Join(dir, "hyprctl"), filepath.Join(dir, "hyprctl.real")); err != nil {
+		t.Fatal(err)
+	}
+	// The apply's reload succeeds; the rollback's reload fails.
+	wrapper := `#!/bin/bash
+args=("$@")
+if [[ "${1-}" == "--instance" ]]; then shift 2; fi
+if [[ "${1-}" == "reload" && -f "$HYPRCTL_STATE" ]]; then
+  printf '%s\n' "$*" >> "$HYPRCTL_LOG"
+  echo "reload failed" >&2
+  exit 1
+fi
+exec "$(dirname "$0")/hyprctl.real" "${args[@]}"
+`
+	if err := os.WriteFile(filepath.Join(dir, "hyprctl"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := profile.FromMonitors("Desk", monitors)
+	p.Outputs[0].Width, p.Outputs[0].Mode = 3840, "3840x1080@60Hz"
+	if err := env.store.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(env.client, env.store, Config{MonitorsConf: env.monitorsConfPath, HyprConfig: env.hyprlandConfigPath})
+	err := svc.applyAutomatic(context.Background())
+	if !errors.Is(err, apply.ErrVerificationFailed) || !errors.Is(err, apply.ErrRollbackFailed) {
+		t.Fatalf("lost failure cause: %v", err)
+	}
+	if errors.Is(err, errAutomaticApplyRejected) || svc.rejected != nil {
+		t.Fatalf("failed rollback paused automatic retries: %v", err)
+	}
+	if reloadCount(env.logPath) != 2 {
+		t.Fatalf("expected the apply reload and the failed rollback reload, got %d", reloadCount(env.logPath))
 	}
 }

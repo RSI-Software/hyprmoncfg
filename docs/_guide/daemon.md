@@ -65,18 +65,23 @@ Physical-size scale recommendations and explicit failed-wake/cold-start rescue
 remain separate follow-up work.
 
 When no saved profile matches, usable live displays keep their mode, position,
-rotation, scale and signal settings. Existing workspace assignments are imported.
-Only modeless or disabled displays need an automatic extended layout; an
-overlapping initial arrangement is rebuilt rather than preserved.
+rotation, scale and color settings. VRR and bit depth use the same values as a
+newly added display (VRR off, 8-bit), because Hyprland reports whether VRR is
+active and the current buffer format rather than the configured settings.
+Existing workspace assignments are imported. Only modeless or disabled displays
+need an automatic extended layout; an overlapping initial arrangement is rebuilt
+rather than preserved. Hyprland's synthetic `FALLBACK` output is never part of it.
 
-If verification rejects a layout and rollback leaves every intended display
-usable, the daemon pauses automatic attempts for that same request and restored
+If verification rejects a layout and rollback restores the previous configuration
+and leaves every intended display usable, the daemon pauses automatic attempts for that same request and restored
 state. This prevents repeatedly switching between a rejected mode and a working
 one. Editing the profile, changing the display state or workspace rules, or
 explicitly running `hyprmoncfg manage` permits another attempt. Confirmed previews
 also clear the pause. VRR activity and scanout buffer format changes do not clear
 it. The pause is held for the running daemon session and logged as
-`automatic retry paused`; it does not rewrite saved profiles.
+`automatic retry paused`; it does not rewrite saved profiles. A rejection whose
+rollback failed keeps retrying. A compositor that stops answering after it has
+already reported a mismatch still counts as a rejection, not a busy compositor.
 
 Other failed automatic applies retry independently of monitor-change events, starting
 after 2 seconds with capped exponential backoff up to 30 seconds. Transient busy
