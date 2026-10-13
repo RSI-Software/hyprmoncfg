@@ -1,9 +1,12 @@
 package render
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
 func TestHyprlangEscapePreservesLiteralSyntax(t *testing.T) {
@@ -47,5 +50,26 @@ func TestLuaQuoteEscapesLuaStringSyntax(t *testing.T) {
 	want := `"desc:Dell #$,\n\"\\\001"`
 	if got != want {
 		t.Fatalf("luaQuote() = %q, want %q", got, want)
+	}
+}
+
+func TestLiveOutputRuleRendersOneEnabledOutput(t *testing.T) {
+	panel := hypr.Monitor{Name: "eDP-1", Description: "BOE Panel", Make: "BOE", Model: "Panel", Serial: "I1"}
+	hdmi := hypr.Monitor{Name: "HDMI-A-1", Description: "HKC 27E1QA", Make: "HKC", Model: "27E1QA", Serial: "E1"}
+	monitors := []hypr.Monitor{panel, hdmi}
+	p := profile.New("casa", []profile.OutputConfig{
+		{Key: panel.HardwareKey(), Name: panel.Name, Enabled: true, Width: 1920, Height: 1080, Refresh: 144, X: 2560, Scale: 1.6},
+		{Key: hdmi.HardwareKey(), Name: hdmi.Name, Enabled: false},
+	})
+	lua, ok := LiveOutputRule(p, monitors, "eDP-1", Options{Format: config.HyprConfigLua, UseMonitorV2: true})
+	if !ok || !strings.HasPrefix(lua, "hl.monitor({") || !strings.Contains(lua, `output = "desc:BOE Panel"`) ||
+		!strings.Contains(lua, `mode = "1920x1080@144.00"`) || !strings.Contains(lua, `position = "2560x0"`) || !strings.Contains(lua, "scale = 1.6") {
+		t.Fatalf("unexpected Lua rule (ok=%v):\n%s", ok, lua)
+	}
+	if keyword, ok := LiveOutputRule(p, monitors, "eDP-1", Options{Format: config.HyprConfigLegacy}); !ok || keyword != "eDP-1,1920x1080@144.00,2560x0,1.6,transform,0,vrr,0" {
+		t.Fatalf("unexpected keyword rule (ok=%v): %s", ok, keyword)
+	}
+	if _, ok := LiveOutputRule(p, monitors, "HDMI-A-1", Options{Format: config.HyprConfigLua}); ok {
+		t.Fatal("a disabled output has no live rule to set")
 	}
 }

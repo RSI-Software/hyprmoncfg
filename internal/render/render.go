@@ -28,6 +28,30 @@ func RenderConfig(p profile.Profile, monitors []hypr.Monitor, opts Options) (str
 	return renderLegacyConfig(p, monitors, opts.UseMonitorV2)
 }
 
+// LiveOutputRule renders the rule for one connected output as a live command:
+// Lua code for `hyprctl eval` with a Lua config, or a `keyword monitor` value
+// otherwise. It is false when the profile has no enabled rule for the output.
+func LiveOutputRule(p profile.Profile, monitors []hypr.Monitor, connector string, opts Options) (string, bool) {
+	p = profile.ExtendConnected(p, monitors)
+	p.Normalize()
+	resolver := profile.NewMonitorResolver(monitors)
+	matched, _ := resolveProfileOutputs(p, resolver)
+	for _, item := range matched {
+		if item.monitor.Name != connector || !item.config.Enabled || item.config.MirrorOf != "" {
+			continue
+		}
+		identifier := resolver.SelectorForOutput(item.config, item.monitor)
+		if opts.Format != config.HyprConfigLua {
+			return CommandForOutput(item.monitor.Name, item.config, ""), true
+		}
+		if opts.UseMonitorV2 {
+			return renderLuaMonitorCall(identifier, item.config, ""), true
+		}
+		return "hl.monitor(" + luaQuote(CommandForOutput(identifier, item.config, "")) + ")", true
+	}
+	return "", false
+}
+
 func ProfileMonitors(p profile.Profile) []hypr.Monitor {
 	p.Normalize()
 	monitors := make([]hypr.Monitor, 0, len(p.Outputs))

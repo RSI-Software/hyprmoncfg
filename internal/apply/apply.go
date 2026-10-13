@@ -334,7 +334,11 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 		}
 	}
 
-	applied, err := e.waitForAppliedProfile(ctx, p, monitors)
+	var rescue func(context.Context, []hypr.Monitor)
+	if e.TolerateModeless {
+		rescue = e.lightPanels(p, monitors, render.Options{Format: resolvedConfig.Format, UseMonitorV2: supportsV2})
+	}
+	applied, err := e.waitForAppliedProfile(ctx, p, monitors, rescue)
 	if err != nil {
 		return rollback(err)
 	}
@@ -443,7 +447,41 @@ func wrapRollbackError(action string, err error) error {
 	return fmt.Errorf("%s: %w", action, err)
 }
 
-func (e Engine) waitForAppliedProfile(ctx context.Context, p profile.Profile, before []hypr.Monitor) ([]hypr.Monitor, error) {
+// lightPanels returns a check that sets the mode of a built-in panel turned on
+// to rescue a dark external but left enabled without a mode. Some drivers
+// (i915 with the lid closed) enable the panel from the reloaded config yet
+// give it no mode, and the external stays dark with it; setting the panel's
+// rule live gives it one. Each panel is set once per apply.
+func (e Engine) lightPanels(p profile.Profile, before []hypr.Monitor, opts render.Options) func(context.Context, []hypr.Monitor) {
+	done := map[string]bool{}
+	return func(ctx context.Context, applied []hypr.Monitor) {
+		for _, monitor := range applied {
+			if !monitor.IsInternal() || monitor.Disabled || monitor.Width > 0 && monitor.Height > 0 || done[monitor.Name] {
+				continue
+			}
+			rule, ok := render.LiveOutputRule(p, before, monitor.Name, opts)
+			if !ok {
+				continue
+			}
+			done[monitor.Name] = true
+			var err error
+			if opts.Format == config.HyprConfigLua {
+				_, err = e.Client.Eval(ctx, rule)
+			} else {
+				err = e.Client.KeywordMonitor(ctx, rule)
+			}
+			if e.Logf != nil {
+				if err != nil {
+					e.Logf("%s came on without a mode; setting its mode failed: %v", monitor.Name, err)
+				} else {
+					e.Logf("%s came on without a mode; set its mode directly", monitor.Name)
+				}
+			}
+		}
+	}
+}
+
+func (e Engine) waitForAppliedProfile(ctx context.Context, p profile.Profile, before []hypr.Monitor, rescue func(context.Context, []hypr.Monitor)) ([]hypr.Monitor, error) {
 	ctx, cancel := context.WithTimeout(ctx, applyValidationTimeout)
 	defer cancel()
 
@@ -466,6 +504,9 @@ func (e Engine) waitForAppliedProfile(ctx context.Context, p profile.Profile, be
 			lastErr = err
 		} else if err := validateAppliedProfile(p, before, applied, e.TolerateModeless); err != nil {
 			lastErr = err
+			if rescue != nil {
+				rescue(ctx, applied)
+			}
 		} else {
 			return applied, nil
 		}
@@ -730,7 +771,10 @@ func validateAppliedProfile(p profile.Profile, before []hypr.Monitor, after []hy
 			problems = append(problems, fmt.Errorf("%s was disabled after apply", monitor.Name))
 			continue
 		}
-		if tolerateModeless && (monitor.Width <= 0 || monitor.Height <= 0) && (applied.Width <= 0 || applied.Height <= 0) {
+		// The tolerance covers the dark externals, never the built-in panel
+		// turned on to rescue them: it is only useful once it has a mode.
+		if tolerateModeless && !monitor.IsInternal() &&
+			(monitor.Width <= 0 || monitor.Height <= 0) && (applied.Width <= 0 || applied.Height <= 0) {
 			continue
 		}
 		if applied.X != output.X || applied.Y != output.Y {
