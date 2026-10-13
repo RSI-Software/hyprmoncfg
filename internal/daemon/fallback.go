@@ -82,10 +82,14 @@ type displayFallbacks struct {
 	mu          sync.Mutex
 	connectedAt map[string]time.Time
 	switchedAt  map[string]time.Time
-	noMode      map[string]int
-	due         map[string]string
-	lastSeen    map[string]hypr.Monitor
-	active      map[string]displayFallback
+	// settled is the connection each settle tick was delivered for. One
+	// tick per connection: a reconciliation that does not switch the display
+	// (monitor management off, or a profile without it) must not re-arm it.
+	settled  map[string]time.Time
+	noMode   map[string]int
+	due      map[string]string
+	lastSeen map[string]hypr.Monitor
+	active   map[string]displayFallback
 }
 
 func newDisplayFallbacks(configDir string, logf func(string, ...any)) *displayFallbacks {
@@ -95,6 +99,7 @@ func newDisplayFallbacks(configDir string, logf func(string, ...any)) *displayFa
 		settle:      fallbackSettle,
 		connectedAt: map[string]time.Time{},
 		switchedAt:  map[string]time.Time{},
+		settled:     map[string]time.Time{},
 		noMode:      map[string]int{},
 		due:         map[string]string{},
 		lastSeen:    map[string]hypr.Monitor{},
@@ -144,6 +149,7 @@ func (f *displayFallbacks) observeEvent(ev hypr.Event, now time.Time) bool {
 		switched, wasSwitched := f.switchedAt[key]
 		delete(f.connectedAt, key)
 		delete(f.switchedAt, key)
+		delete(f.settled, key)
 		entry := f.active[key]
 		switch {
 		case !entry.GentleWake:
@@ -183,12 +189,28 @@ func (f *displayFallbacks) settleDelay() (time.Duration, bool) {
 		if _, done := f.switchedAt[key]; done {
 			continue
 		}
+		if sent, ok := f.settled[key]; ok && sent.Equal(connected) {
+			continue
+		}
 		remaining := max(0, connected.Add(f.settle).Sub(now))
 		if !waiting || remaining < wait {
 			wait, waiting = remaining, true
 		}
 	}
 	return wait, waiting
+}
+
+// settleFired records that the settle tick for every display now due was
+// delivered, so settleDelay stops reporting them until they reconnect.
+func (f *displayFallbacks) settleFired() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	for key, connected := range f.connectedAt {
+		if f.active[key].GentleWake && !connected.Add(f.settle).After(now) {
+			f.settled[key] = connected
+		}
+	}
 }
 
 // observeFailedApply counts enabled, awake displays left without a mode by an

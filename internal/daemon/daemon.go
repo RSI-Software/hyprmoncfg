@@ -398,6 +398,7 @@ func (s *Service) Run(ctx context.Context) error {
 			return nil
 		case <-settleCh:
 			settleCh = nil
+			s.fallbacks.settleFired()
 			if systemSuspended {
 				continue
 			}

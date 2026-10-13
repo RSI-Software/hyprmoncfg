@@ -332,3 +332,31 @@ func TestStatusReportsASteppedDownDisplay(t *testing.T) {
 		}
 	}
 }
+
+// One settle tick per connection: a reconciliation that does not switch the
+// display, such as one with monitor management off, must not re-arm it.
+func TestFallbackSettleTickFiresOncePerConnection(t *testing.T) {
+	f, c := trackerAt(t.TempDir(), t)
+	p, lg, msi := fallbackDesk()
+	f.apply(p, []hypr.Monitor{lg, msi})
+	bounce(f, c)
+
+	c.advance(time.Second)
+	connect(f, c)
+	c.advance(fallbackSettle)
+	if wait, ok := f.settleDelay(); !ok || wait != 0 {
+		t.Fatalf("should be due now, got %s ok=%v", wait, ok)
+	}
+	f.settleFired()
+	if wait, ok := f.settleDelay(); ok {
+		t.Fatalf("a delivered settle tick must not be reported again, got %s", wait)
+	}
+
+	// The next connection gets its own tick.
+	c.advance(time.Second)
+	drop(f, c)
+	connect(f, c)
+	if wait, ok := f.settleDelay(); !ok || wait != fallbackSettle {
+		t.Fatalf("a new connection should wait %s to settle, got %s ok=%v", fallbackSettle, wait, ok)
+	}
+}
