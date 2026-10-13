@@ -76,7 +76,7 @@ If verification rejects a layout and rollback restores the previous configuratio
 and leaves every intended display usable, the daemon pauses automatic attempts for that same request and restored
 state. This prevents repeatedly switching between a rejected mode and a working
 one. Editing the profile, changing the display state or workspace rules, or
-explicitly running `hyprmoncfg manage` permits another attempt. Confirmed previews
+explicitly running `hyprmoncfg manage` or turning automatic profile selection on permits another attempt. Confirmed previews
 also clear the pause. VRR activity and scanout buffer format changes do not clear
 it. The pause is held for the running daemon session and logged as
 `automatic retry paused`; it does not rewrite saved profiles. A rejection whose

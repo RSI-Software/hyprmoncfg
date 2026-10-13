@@ -222,6 +222,9 @@ func (s *Service) SetProfileAuto(params ipc.ProfileAutoParams) error {
 		s.writeMu.Lock()
 		s.clearManualOverride()
 		s.applied = nil
+		// Turning automatic selection on is an explicit request for it, as
+		// Manage is: try the rejected layout again.
+		s.rejected = nil
 		s.writeMu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

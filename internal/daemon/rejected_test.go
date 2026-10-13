@@ -13,6 +13,7 @@ import (
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
@@ -150,6 +151,13 @@ func TestRejectedAutomaticLayoutStopsRetriesAndAcceptsEditedProfile(t *testing.T
 	if reloadCount(env.logPath) != count {
 		t.Fatal("explicit reconciliation repeated rejected apply")
 	}
+	// Turning automatic selection on asks for another try, which this
+	// display rejects again.
+	_ = env.svc.SetProfileAuto(ipc.ProfileAutoParams{Enabled: true})
+	if reloadCount(env.logPath) <= count {
+		t.Fatal("turning automatic selection on did not retry the layout")
+	}
+	count = reloadCount(env.logPath)
 	if err := env.svc.store.Save(profile.FromMonitors("Home", monitors)); err != nil {
 		t.Fatal(err)
 	}

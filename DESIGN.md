@@ -186,7 +186,7 @@ a persisted external-only generated file to make the first screen accessible.
 
 A rejected automatic apply whose rollback succeeds and leaves usable intended
 displays pauses for the unchanged request and restored state. A failed rollback
-keeps recovery running. Explicit management, a confirmed preview, changed
+keeps recovery running. Explicit management, turning automatic selection on, a confirmed preview, changed
 profile or meaningful display/workspace state permits another attempt. This is separate from continued recovery for missing/modeless outputs;
 live VRR activity and buffer formats must not restart a rejected modeset.
 

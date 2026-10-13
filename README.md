@@ -170,7 +170,8 @@ The daemon scores profiles in `~/.config/hyprmoncfg/profiles/` against the conne
 When no profile matches, automatic setup retains a usable existing layout,
 including portrait rotation and the current resolution. A rejected automatic
 apply that rolls back to usable displays is paused instead of repeatedly
-flipping modes. Edit the profile or run `hyprmoncfg manage` to retry; modeless
+flipping modes. Edit the profile, run `hyprmoncfg manage`, or turn automatic
+profile selection on to retry; modeless
 outputs retain automatic recovery. See [daemon behavior](docs/_guide/daemon.md).
 
 When a dock is still connecting, monitor and workspace reads have short deadlines and desktop clients can show a connecting state while retrying. Unique hardware identities skip DRM connector probing; ambiguous identities use one shared probe with bounded waiting. See [daemon behavior](https://hyprmoncfg.dev/daemon/) and the [editor IPC reference](https://hyprmoncfg.dev/ipc/) for the matching and snapshot contracts.
