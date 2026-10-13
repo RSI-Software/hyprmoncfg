@@ -59,6 +59,49 @@ func TestSlowReadsAfterReloadDoNotRollBack(t *testing.T) {
 	}
 }
 
+// An answered mismatch is a definitive rejection. A compositor that then
+// stops answering must not turn it back into a busy, retryable timeout.
+func TestQueryTimeoutAfterMismatchKeepsVerificationFailure(t *testing.T) {
+	shortenApplyValidation(t, 400*time.Millisecond)
+	engine, _, logPath := initLuaProbeTestEngine(t, "ok", []byte("-- previous generated layout\n"))
+	engine.QueryTimeout = 40 * time.Millisecond
+	dir := filepath.Dir(logPath)
+	helper := filepath.Join(dir, "hyprctl")
+	source, err := os.ReadFile(helper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded := filepath.Join(dir, "reloaded")
+	counter := filepath.Join(dir, "reads")
+	reloadBranch := `if [ "$cmd1" = "reload" ]; then` + "\n"
+	monitorsBranch := `if [ "$cmd1" = "-j" ] && [ "$cmd2" = "monitors" ] && [ "$cmd3" = "all" ]; then` + "\n"
+	// Answer the first read after the reload, then stall every later one.
+	stall := fmt.Sprintf(`if [ -e %[1]q ]; then
+  n=$(cat %[2]q 2>/dev/null || echo 0)
+  echo $((n + 1)) > %[2]q
+  if [ "$n" -ge 1 ]; then
+    exec sleep 20
+  fi
+fi
+`, reloaded, counter)
+	script := string(source)
+	if !strings.Contains(script, reloadBranch) || !strings.Contains(script, monitorsBranch) {
+		t.Fatalf("fake hyprctl no longer has the expected branches:\n%s", script)
+	}
+	script = strings.Replace(script, reloadBranch, reloadBranch+fmt.Sprintf("  touch %q\n", reloaded), 1)
+	script = strings.Replace(script, monitorsBranch, monitorsBranch+stall, 1)
+	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := newTestProfile()
+	p.Outputs[1].X = 4000 // The fake compositor keeps reporting x=3840.
+	_, err = engine.Apply(context.Background(), p, monitors, ApplyModeNonInteractive)
+	if !errors.Is(err, ErrVerificationFailed) {
+		t.Fatalf("a later timeout hid the verification failure: %v", err)
+	}
+}
+
 func shortenApplyValidation(t *testing.T, timeout time.Duration) {
 	t.Helper()
 	previous := applyValidationTimeout

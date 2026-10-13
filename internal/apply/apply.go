@@ -46,6 +46,10 @@ var applyValidationTimeout = 3 * time.Second
 // requested layout. It is distinct from an unanswered compositor query.
 var ErrVerificationFailed = errors.New("display configuration verification failed")
 
+// ErrRollbackFailed marks an apply whose rollback did not complete, so the
+// previous config, include or live state may not have been restored.
+var ErrRollbackFailed = errors.New("rollback failed")
+
 type Engine struct {
 	Client *hypr.Client
 	// QueryTimeout bounds each compositor read, independently of the apply's
@@ -448,8 +452,17 @@ func wrapRollbackError(action string, err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%s: %w", action, err)
+	return rollbackError{action: action, err: err}
 }
+
+type rollbackError struct {
+	action string
+	err    error
+}
+
+func (e rollbackError) Error() string { return e.action + ": " + e.err.Error() }
+
+func (e rollbackError) Unwrap() []error { return []error{ErrRollbackFailed, e.err} }
 
 // lightPanels returns a check that sets the mode of a built-in panel turned on
 // to rescue a dark external but left enabled without a mode. Some drivers
@@ -508,7 +521,11 @@ func (e Engine) waitForAppliedProfile(ctx context.Context, p profile.Profile, be
 			return nil, err
 		}
 		if err != nil {
-			lastErr = err
+			// An answered mismatch is definitive; a later unanswered read
+			// must not turn it back into a transient busy compositor.
+			if !errors.Is(lastErr, ErrVerificationFailed) {
+				lastErr = err
+			}
 		} else if err := validateAppliedProfile(p, before, applied, e.TolerateModeless); err != nil {
 			lastErr = fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 			if rescue != nil {
