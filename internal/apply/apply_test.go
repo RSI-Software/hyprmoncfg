@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1902,5 +1903,80 @@ func TestValidateToleratesAnOutputThatStaysModelessOnlyWhenAsked(t *testing.T) {
 	lit.Width, lit.Height = 2560, 1440
 	if err := validateAppliedProfile(p, []hypr.Monitor{panel, lit}, before, true); err == nil {
 		t.Fatal("an output that lost its mode during the apply must still fail")
+	}
+}
+
+func countReloads(t *testing.T, logPath string) int {
+	t.Helper()
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read hyprctl log: %v", err)
+	}
+	reloads := 0
+	for _, line := range strings.Split(string(logBytes), "\n") {
+		if line == "reload" {
+			reloads++
+		}
+	}
+	return reloads
+}
+
+// Reapplying the layout that is already on screen, as the daemon does after
+// a display wake, must not reload Hyprland: a lock screen waits for the
+// reload, and binds added at runtime are lost (#86).
+func TestEngineApplySkipsReloadWhenConfigAndDisplaysAlreadyMatch(t *testing.T) {
+	engine, logPath, err := initTestEngine(t)
+	if err != nil {
+		t.Fatalf("init test engine: %v", err)
+	}
+	// The include is recognized by the generated file's usual name.
+	engine.MonitorsConfPath = filepath.Join(filepath.Dir(engine.MonitorsConfPath), "hyprmoncfg-monitors.conf")
+	var logged []string
+	engine.Logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	ctx := context.Background()
+	if _, err := engine.Apply(ctx, newTestProfile(), monitors); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	if got := countReloads(t, logPath); got != 1 {
+		t.Fatalf("first apply should reload once, got %d", got)
+	}
+	if _, err := engine.Apply(ctx, newTestProfile(), monitors); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	if got := countReloads(t, logPath); got != 1 {
+		t.Fatalf("an unchanged apply must not reload, got %d reloads", got)
+	}
+	if !slices.ContainsFunc(logged, func(line string) bool { return strings.Contains(line, "skipped the Hyprland reload") }) {
+		t.Fatalf("the skipped reload should be logged, got %q", logged)
+	}
+
+	// Same file, but the live displays drifted: reload to restore them.
+	drifted := slices.Clone(monitors)
+	drifted[1].Scale = 2
+	if _, err := engine.Apply(ctx, newTestProfile(), drifted); err != nil {
+		t.Fatalf("drifted apply: %v", err)
+	}
+	if got := countReloads(t, logPath); got != 2 {
+		t.Fatalf("displays that differ from the profile need a reload, got %d reloads", got)
+	}
+}
+
+func TestEngineApplySkipsLuaReloadWhenConfigAndDisplaysAlreadyMatch(t *testing.T) {
+	engine, monitorsLuaPath, logPath := initLuaProbeTestEngine(t, "ok", nil)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if _, err := engine.Apply(ctx, newTestProfile(), monitors, ApplyModeNonInteractive); err != nil {
+			t.Fatalf("apply %d: %v", i, err)
+		}
+	}
+	if got := countReloads(t, logPath); got != 1 {
+		t.Fatalf("an unchanged Lua apply must not reload, got %d reloads", got)
+	}
+	rendered, err := os.ReadFile(monitorsLuaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rendered), luaProbePrefix) || !strings.Contains(string(rendered), "hl.monitor({") {
+		t.Fatalf("generated Lua config should hold the rules without a probe, got:\n%s", rendered)
 	}
 }

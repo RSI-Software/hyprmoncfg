@@ -256,16 +256,28 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 		return RevertState{}, err
 	}
 
+	// Rewriting an identical config still makes Hyprland reload everything:
+	// a lock screen waits for it, and binds added at runtime are lost. When
+	// the file would not change and the displays already run as the profile
+	// says, the reload has nothing to do.
+	unchanged := backup.Exists && string(backup.Content) == rendered &&
+		validateAppliedProfile(p, monitors, monitors, e.TolerateModeless) == nil
 	renderedForReload := rendered
 	luaProbe := ""
-	if resolvedConfig.Format == config.HyprConfigLua {
-		renderedForReload, luaProbe, err = addLuaExecutionProbe(rendered)
-		if err != nil {
+	writeRendered := func() error {
+		if resolvedConfig.Format == config.HyprConfigLua {
+			renderedForReload, luaProbe, err = addLuaExecutionProbe(rendered)
+			if err != nil {
+				return err
+			}
+		}
+		return config.WriteFileAtomic(resolvedConfig.MonitorsPath, []byte(renderedForReload), 0o644)
+	}
+	written := !unchanged
+	if written {
+		if err := writeRendered(); err != nil {
 			return RevertState{}, err
 		}
-	}
-	if err := config.WriteFileAtomic(resolvedConfig.MonitorsPath, []byte(renderedForReload), 0o644); err != nil {
-		return RevertState{}, err
 	}
 	// Write the target before the include, and roll both back on every failure.
 	// A cancelled apply still needs its own time to restore the previous layout.
@@ -278,6 +290,13 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	if err != nil {
 		return rollback(fmt.Errorf("sync Omarchy laptop display: %w", err))
 	}
+	if unchanged && revertState.LaptopToggle.Path != "" {
+		after, err := config.SnapshotFile(revertState.LaptopToggle.Path)
+		if err != nil || after.Exists != revertState.LaptopToggle.Exists ||
+			string(after.Content) != string(revertState.LaptopToggle.Content) {
+			unchanged = false
+		}
+	}
 	include, err := config.EnsureIncluded(resolvedConfig.RootPath, resolvedConfig.Format, resolvedConfig.MonitorsPath)
 	if err != nil {
 		return rollback(err)
@@ -285,19 +304,33 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	if include.Changed() {
 		revertState.RootConf = include.Previous
 		revertState.RootWritten = include.Written
+		unchanged = false
 	}
-	if err := e.Client.Reload(ctx); err != nil {
-		return rollback(err)
-	}
-	if luaProbe != "" {
-		if err := e.verifyLuaExecutionProbe(ctx, luaProbe, resolvedConfig.RootPath, resolvedConfig.MonitorsPath); err != nil {
+	if unchanged {
+		if e.Logf != nil {
+			e.Logf("generated monitor config unchanged and displays already match; skipped the Hyprland reload")
+		}
+	} else {
+		// The laptop toggle or the include changed after all. Write the
+		// config too, so a Lua reload carries its execution probe.
+		if !written {
+			if err := writeRendered(); err != nil {
+				return rollback(err)
+			}
+		}
+		if err := e.Client.Reload(ctx); err != nil {
 			return rollback(err)
 		}
-		// The probe only needs to exist for the reload above. Keep the generated
-		// file clean without causing a second monitor reload; each future apply
-		// uses a fresh probe, so the current Lua global cannot satisfy it.
-		if err := config.WriteFileAtomic(resolvedConfig.MonitorsPath, []byte(rendered), 0o644); err != nil {
-			return rollback(fmt.Errorf("remove Lua execution probe: %w", err))
+		if luaProbe != "" {
+			if err := e.verifyLuaExecutionProbe(ctx, luaProbe, resolvedConfig.RootPath, resolvedConfig.MonitorsPath); err != nil {
+				return rollback(err)
+			}
+			// The probe only needs to exist for the reload above. Keep the generated
+			// file clean without causing a second monitor reload; each future apply
+			// uses a fresh probe, so the current Lua global cannot satisfy it.
+			if err := config.WriteFileAtomic(resolvedConfig.MonitorsPath, []byte(rendered), 0o644); err != nil {
+				return rollback(fmt.Errorf("remove Lua execution probe: %w", err))
+			}
 		}
 	}
 

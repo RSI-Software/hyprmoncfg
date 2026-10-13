@@ -84,6 +84,13 @@ formats, and rounded scale readbacks do not cause another reload. Changes to the
 saved configuration (including config-only settings), layout, or workspace rules
 still require reconciliation. These checks do not extend the wake delay.
 
+When a reconciliation would write a generated config identical to the one on
+disk, the displays already match the profile, and neither the root include nor
+Omarchy's laptop display flag changes, hyprmoncfg skips the write and the
+Hyprland reload. Workspace placement and the Post-apply command still run. A
+lock screen waking with the displays then is not held up by a reload, and binds
+added at runtime survive it.
+
 ## Exit behavior
 
 - CLI commands exit non-zero on Hyprland query failures, invalid layouts, missing profiles, or generated-config verification failures.

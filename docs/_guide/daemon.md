@@ -53,7 +53,7 @@ When the daemon detects a monitor or lid-state change, it runs through these ste
 6. Tell Hyprland to reload
 7. Re-read monitor state and verify the result matches what was intended
 
-If the winning profile is the same one that's already applied, the daemon skips re-applying it. You won't see unnecessary reloads.
+If the winning profile is the same one that's already applied, the daemon skips re-applying it. If it does reapply, for example after the displays wake, and the generated file would come out identical while the displays already match, it skips steps 5 and 6. You won't see unnecessary reloads.
 
 An output absent from a non-strict profile is added to its right edge, vertically
 centered against the adjacent independent display using logical dimensions. For
