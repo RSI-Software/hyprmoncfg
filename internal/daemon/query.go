@@ -27,7 +27,7 @@ func (s *Service) queryMonitors(ctx context.Context) ([]hypr.Monitor, error) {
 		err = fmt.Errorf("%w (monitors)", ipc.ErrCompositorBusy)
 	}
 	s.logQuery("monitors", started, err)
-	return monitors, err
+	return hypr.DropHeadless(monitors), err
 }
 
 func (s *Service) queryWorkspaceRules(ctx context.Context) ([]hypr.WorkspaceRule, error) {

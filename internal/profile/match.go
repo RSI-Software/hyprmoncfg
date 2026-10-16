@@ -239,7 +239,7 @@ func ExactStateMatch(profiles []Profile, monitors []hypr.Monitor, rules []hypr.W
 		return Profile{}, false
 	}
 
-	current := FromState("", monitors, rules)
+	current := FromState("", monitors, connectedHyprRules(rules, monitors))
 	var match Profile
 	matches := 0
 	for _, candidate := range profiles {
@@ -273,8 +273,8 @@ func profilesShareEffectiveState(a, b Profile, monitors []hypr.Monitor) bool {
 		return false
 	}
 
-	aRules := ResolveWorkspaceRules(a, monitors)
-	bRules := ResolveWorkspaceRules(b, monitors)
+	aRules := connectedWorkspaceRules(ResolveWorkspaceRules(a, monitors), monitors)
+	bRules := connectedWorkspaceRules(ResolveWorkspaceRules(b, monitors), monitors)
 	if len(aRules) != len(bRules) {
 		return false
 	}
@@ -290,6 +290,41 @@ func profilesShareEffectiveState(a, b Profile, monitors []hypr.Monitor) bool {
 		}
 	}
 	return true
+}
+
+// A workspace rule for an output outside the monitor set, such as a headless
+// output or an unplugged display, changes nothing on screen, so exact-state
+// matching ignores it on both sides.
+func connectedHyprRules(rules []hypr.WorkspaceRule, monitors []hypr.Monitor) []hypr.WorkspaceRule {
+	targets := connectedOutputTargets(monitors)
+	out := make([]hypr.WorkspaceRule, 0, len(rules))
+	for _, rule := range rules {
+		if key, _ := matchMonitorRule(rule.Monitor, monitors); targets[key] {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
+func connectedWorkspaceRules(rules []WorkspaceRule, monitors []hypr.Monitor) []WorkspaceRule {
+	targets := connectedOutputTargets(monitors)
+	out := make([]WorkspaceRule, 0, len(rules))
+	for _, rule := range rules {
+		if targets[firstNonEmpty(rule.OutputKey, rule.OutputName)] {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
+func connectedOutputTargets(monitors []hypr.Monitor) map[string]bool {
+	matchCounts := hypr.MonitorMatchCounts(monitors)
+	targets := make(map[string]bool, 2*len(monitors))
+	for _, m := range monitors {
+		targets[hypr.MonitorOutputKey(m, matchCounts)] = true
+		targets[m.Name] = true
+	}
+	return targets
 }
 
 func withOmittedMonitorsDisabled(p Profile, monitors []hypr.Monitor) Profile {

@@ -351,3 +351,34 @@ func TestRunRetriesTransientWorkspaceTimeoutWithoutNewMonitorEvent(t *testing.T)
 		t.Fatal("fixture did not exercise the query timeout")
 	}
 }
+
+// The TUI reads monitors straight from the client and keeps showing headless
+// outputs; only the daemon leaves them out of the monitor set.
+func TestQueryMonitorsDropsHeadlessOutputsTheClientKeeps(t *testing.T) {
+	withHeadless := strings.TrimSuffix(applyBestDualBeforeJSON, "]") +
+		`,{"id":2,"name":"HEADLESS-2","width":1920,"height":1080,"refreshRate":60,"x":20000,"y":0,"scale":1,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, withHeadless, withHeadless)
+	svc := New(env.client, env.store, Config{Logf: func(string, ...any) {}})
+
+	names := func(monitors []hypr.Monitor) string {
+		var out []string
+		for _, monitor := range monitors {
+			out = append(out, monitor.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	fromClient, err := env.client.Monitors(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromDaemon, err := svc.queryMonitors(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := names(fromClient); got != "eDP-1,DP-1,HEADLESS-2" {
+		t.Errorf("client monitors = %s", got)
+	}
+	if got := names(fromDaemon); got != "eDP-1,DP-1" {
+		t.Errorf("daemon monitors = %s", got)
+	}
+}

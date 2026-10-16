@@ -217,6 +217,26 @@ func TestExactStateMatchFindsUniqueExactProfile(t *testing.T) {
 	}
 }
 
+func TestExactStateMatchIgnoresWorkspaceRulesForDisconnectedOutputs(t *testing.T) {
+	monitors := []hypr.Monitor{{Name: "eDP-1", Make: "BOE", Model: "Panel", Serial: "C3", Width: 1920, Height: 1200, RefreshRate: 60, Scale: 1}}
+	rules := []hypr.WorkspaceRule{{WorkspaceString: "1", Monitor: "eDP-1", Default: true}}
+	exact := FromState("laptop", monitors, rules)
+	exact.Workspaces.Rules = append(exact.Workspaces.Rules, WorkspaceRule{Workspace: "5", OutputKey: "Dell-U2720Q-A1", OutputName: "DP-1"})
+
+	live := append(append([]hypr.WorkspaceRule(nil), rules...),
+		hypr.WorkspaceRule{WorkspaceString: "101", Monitor: "VMON-1", Default: true},
+		hypr.WorkspaceRule{WorkspaceString: "10", Monitor: "HEADLESS-2"},
+	)
+	if _, ok := ExactStateMatch([]Profile{exact}, monitors, live); !ok {
+		t.Fatal("expected rules for disconnected outputs to be ignored")
+	}
+
+	live = append(live, hypr.WorkspaceRule{WorkspaceString: "2", Monitor: "eDP-1"})
+	if _, ok := ExactStateMatch([]Profile{exact}, monitors, live); ok {
+		t.Fatal("expected an extra rule for a connected output to break the match")
+	}
+}
+
 func TestExactStateMatchRejectsAmbiguousDuplicateProfiles(t *testing.T) {
 	monitors := []hypr.Monitor{
 		{
