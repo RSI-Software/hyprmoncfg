@@ -443,9 +443,6 @@ func (s *Service) Run(ctx context.Context) error {
 			if parts := strings.SplitN(name, ",", 3); len(parts) > 1 {
 				name = parts[1]
 			}
-			if hypr.HeadlessEvent(ev) {
-				continue
-			}
 			if !(hypr.Monitor{Name: name}).IsInternal() {
 				s.cfg.LaptopToggle.Reset()
 			}

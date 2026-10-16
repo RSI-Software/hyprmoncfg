@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -75,45 +74,7 @@ func (c *Client) Monitors(ctx context.Context) ([]Monitor, error) {
 	if enricher == nil {
 		enricher = sharedMonitorConnectorEnricher
 	}
-	monitors, err = enricher.enrich(ctx, monitors)
-	if err != nil {
-		return nil, err
-	}
-	return dropHeadlessMonitors(monitors), nil
-}
-
-// drmConnectorName matches the names the kernel gives display connectors, as
-// listed in drm_connector_enum_list. Hyprland names a real output after its
-// connector; a headless output takes whatever name its creator chose.
-var drmConnectorName = regexp.MustCompile(`^(Unknown|VGA|DVI-[IDA]|Composite|SVIDEO|LVDS|Component|DIN|DP|HDMI-[AB]|TV|eDP|Virtual|DSI|DPI|Writeback|SPI|USB)-[0-9]+$`)
-
-// dropHeadlessMonitors removes outputs with no EDID identity whose name is not a
-// DRM connector: headless outputs that tools create for recording or
-// automation. They match no profile, so they must not change the monitor set.
-func dropHeadlessMonitors(monitors []Monitor) []Monitor {
-	filtered := monitors[:0]
-	for _, monitor := range monitors {
-		identity := monitor.Make + monitor.Model + monitor.Serial + monitor.Description
-		if strings.TrimSpace(identity) == "" && !drmConnectorName.MatchString(strings.TrimSpace(monitor.Name)) {
-			continue
-		}
-		filtered = append(filtered, monitor)
-	}
-	return filtered
-}
-
-// HeadlessEvent reports whether a hotplug event names a headless output, so
-// adding or removing it never reapplies a profile. The v2 events carry
-// "ID,NAME,DESCRIPTION"; a headless output has no description.
-func HeadlessEvent(ev Event) bool {
-	name, description := ev.Value, ""
-	if parts := strings.SplitN(ev.Value, ",", 3); len(parts) > 1 {
-		name = parts[1]
-		if len(parts) == 3 {
-			description = parts[2]
-		}
-	}
-	return strings.TrimSpace(description) == "" && !drmConnectorName.MatchString(strings.TrimSpace(name))
+	return enricher.enrich(ctx, monitors)
 }
 
 // fallbackConnectorName is what Hyprland calls the placeholder head it invents
