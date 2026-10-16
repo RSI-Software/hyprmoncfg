@@ -72,6 +72,9 @@ them or moves workspaces to them. The TUI still shows them. Hyprland releases
 that do not report an output's backend get a fallback: an output with no EDID
 whose name is not a kernel connector name such as `DP-1` or `HDMI-A-1` counts
 as headless.
+Workspace rules for outputs outside the monitor set, such as a headless output
+or an unplugged display, change nothing on screen, so they do not stop the
+daemon from recognizing an applied profile.
 
 Failed automatic applies retry independently of monitor-change events, starting
 after 2 seconds with capped exponential backoff up to 30 seconds. Transient busy
