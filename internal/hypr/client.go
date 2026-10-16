@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -101,6 +102,42 @@ func dropSyntheticMonitors(monitors []Monitor) []Monitor {
 		filtered = append(filtered, monitor)
 	}
 	return filtered
+}
+
+// DropHeadless removes headless outputs. Screen recorders, streaming hosts,
+// and remote desktops create them with `hyprctl output create headless`.
+// Counted as displays by the daemon, each one arriving changes the monitor
+// set: the layout extends onto a screen nobody looks at, or a profile that
+// keeps other displays off switches it off under the tool that made it, and
+// Hyprland reloads either way. Applying a profile drops them too, or its
+// workspace plan would move workspaces onto them. The TUI still shows them.
+func DropHeadless(monitors []Monitor) []Monitor {
+	filtered := monitors[:0]
+	for _, monitor := range monitors {
+		if isHeadless(monitor) {
+			continue
+		}
+		filtered = append(filtered, monitor)
+	}
+	return filtered
+}
+
+// drmConnectorName matches the names the kernel gives display connectors,
+// which Hyprland uses for every output it drives through DRM.
+var drmConnectorName = regexp.MustCompile(`^(Unknown|VGA|DVI-[IDA]|Composite|SVIDEO|LVDS|Component|DIN|DP|HDMI-[AB]|TV|eDP|Virtual|DSI|DPI|Writeback|SPI|USB)-[0-9]+$`)
+
+func isHeadless(monitor Monitor) bool {
+	if backend := monitor.HardwareDetails.Backend; backend != "" {
+		return backend == "headless"
+	}
+	// Older Hyprland does not report the backend. A headless output has no
+	// EDID and takes its creator's name instead of a kernel connector's; a
+	// nested session's outputs are WAYLAND-N.
+	identity := monitor.Make + monitor.Model + monitor.Serial + monitor.Description
+	name := strings.TrimSpace(monitor.Name)
+	return strings.TrimSpace(identity) == "" &&
+		!drmConnectorName.MatchString(name) &&
+		!strings.HasPrefix(name, "WAYLAND-")
 }
 
 // normalizeMirrorTargets rewrites what hyprctl reports for a mirroring monitor

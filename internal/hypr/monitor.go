@@ -81,6 +81,14 @@ type Monitor struct {
 	AvailableModes        []string  `json:"availableModes"`
 	ActiveWorkspace       Workspace `json:"activeWorkspace"`
 	ConnectorPath         string    `json:"-"`
+
+	HardwareDetails HardwareDetails `json:"hardwareDetails"`
+}
+
+// HardwareDetails describes what drives an output. Hyprland releases that do
+// not report it leave Backend empty.
+type HardwareDetails struct {
+	Backend string `json:"backend"`
 }
 
 func (m Monitor) Bitdepth() int {

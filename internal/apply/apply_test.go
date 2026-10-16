@@ -881,6 +881,45 @@ func TestEngineApplyAndRevertReplayWorkspacePlacement(t *testing.T) {
 	}
 }
 
+func TestEngineApplyKeepsWorkspacesOffHeadlessOutputs(t *testing.T) {
+	engine, logPath, err := initTestEngine(t)
+	if err != nil {
+		t.Fatalf("init test engine: %v", err)
+	}
+	headless := hypr.Monitor{Name: "HEADLESS-2", Width: 1920, Height: 1080, RefreshRate: 60, X: 6720, Y: 360, Scale: 1}
+	live := append(append([]hypr.Monitor(nil), monitors...), headless)
+	data, err := json.Marshal(live)
+	if err != nil {
+		t.Fatalf("marshal monitors: %v", err)
+	}
+	t.Setenv("HYPRCTL_MONITORS", string(data))
+
+	p := newTestProfile()
+	p.Workspaces = profile.WorkspaceSettings{
+		Enabled:       true,
+		Strategy:      profile.WorkspaceStrategySequential,
+		MaxWorkspaces: 6,
+		GroupSize:     2,
+		MonitorOrder:  []string{monitors[0].HardwareKey(), monitors[1].HardwareKey()},
+	}
+
+	// The TUI and the CLI pass every output they show, headless ones included.
+	if _, err := engine.Apply(context.Background(), p, live); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read hyprctl log: %v", err)
+	}
+	if !strings.Contains(string(logBytes), "moveworkspacetomonitor 5 DP-1") {
+		t.Fatalf("expected the plan to cycle over the two displays, got:\n%s", logBytes)
+	}
+	if strings.Contains(string(logBytes), "HEADLESS-2") {
+		t.Fatalf("apply moved workspaces onto a headless output:\n%s", logBytes)
+	}
+}
+
 func TestEngineApplyWaitsForDeferredMonitorReload(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "hyprctl.log")
@@ -1328,6 +1367,11 @@ if [ "$cmd1" = "-j" ] && [ "$cmd2" = "version" ]; then
   exit 0
 fi
 
+if [ "$cmd1" = "-j" ] && [ "$cmd2" = "monitors" ] && [ "$cmd3" = "all" ] && [ -n "${HYPRCTL_MONITORS-}" ]; then
+  printf '%s' "$HYPRCTL_MONITORS"
+  exit 0
+fi
+
 if [ "$cmd1" = "-j" ] && [ "$cmd2" = "monitors" ] && [ "$cmd3" = "all" ]; then
   printf '%s' '[{"id":1,"name":"DP-1","description":"Microstep MPG321UR-QD","make":"Microstep","model":"MPG321UR-QD","serial":"A1","width":3840,"height":2160,"refreshRate":143.99,"x":0,"y":0,"scale":1,"transform":0,"focused":true,"dpmsStatus":true,"vrr":true,"disabled":false,"mirrorOf":"","activeWorkspace":{"id":1,"name":"1"}},{"id":2,"name":"eDP-1","description":"Samsung Display Corp. ATNA60CL10-0","make":"Samsung Display Corp.","model":"ATNA60CL10-0","serial":"B2","width":2880,"height":1800,"refreshRate":120,"x":3840,"y":0,"scale":1,"transform":0,"focused":false,"dpmsStatus":true,"vrr":false,"disabled":false,"mirrorOf":"","activeWorkspace":{"id":2,"name":"2"}}]'
   exit 0
@@ -1395,6 +1439,11 @@ printf '%s\n' "$*" >> "$HYPRCTL_LOG"
 
 if [ "$cmd1" = "-j" ] && [ "$cmd2" = "version" ]; then
   printf '{"version":"0.54.0"}'
+  exit 0
+fi
+
+if [ "$cmd1" = "-j" ] && [ "$cmd2" = "monitors" ] && [ "$cmd3" = "all" ] && [ -n "${HYPRCTL_MONITORS-}" ]; then
+  printf '%s' "$HYPRCTL_MONITORS"
   exit 0
 fi
 

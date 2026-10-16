@@ -83,6 +83,18 @@ it. The pause is held for the running daemon session and logged as
 rollback failed keeps retrying. A compositor that stops answering after it has
 already reported a mismatch still counts as a rejection, not a busy compositor.
 
+The daemon ignores headless outputs. Screen recorders, streaming hosts, and
+remote desktops create them with `hyprctl output create headless`; they never
+join the daemon's monitor set, match a profile, or trigger a reload. Applying a
+profile, from the daemon, the TUI, or `hyprmoncfg apply`, never extends it onto
+them or moves workspaces to them. The TUI still shows them. Hyprland releases
+that do not report an output's backend get a fallback: an output with no EDID
+whose name is not a kernel connector name such as `DP-1` or `HDMI-A-1` counts
+as headless.
+Workspace rules for outputs outside the monitor set, such as a headless output
+or an unplugged display, change nothing on screen, so they do not stop the
+daemon from recognizing an applied profile.
+
 Other failed automatic applies retry independently of monitor-change events, starting
 after 2 seconds with capped exponential backoff up to 30 seconds. Transient busy
 reads and writer contention retry after the normal debounce interval. Successful
